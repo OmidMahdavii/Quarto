@@ -2,7 +2,7 @@ from quarto.objects import Player, Quarto
 from main import RandomPlayer
 import logging
 import numpy as np
-from itertools import product
+from itertools import product, combinations
 from copy import deepcopy
 
 
@@ -47,62 +47,176 @@ class RLPlayer(Player):
         super().__init__(quarto)
         self.quarto = quarto
         self.G = G
+        self.winning_states = self.init_winning_states()
 
+    def init_winning_states(self) -> tuple:
+        not_high_pieces = list(range(8))
+        high_pieces = list(range(8, 16))
+        not_colored_pieces = list(range(4)) + list(range(8, 12))
+        colored_pieces = list(range(4, 8)) + list(range(12, 16))
+        not_solid_pieces = [0, 1, 4, 5, 8, 9, 12, 13]
+        solid_pieces = [2, 3, 6, 7, 10, 11, 14, 15]
+        not_square_pieces = list(range(0, 16, 2))
+        square_pieces = list(range(1, 16, 2))
+
+        all_lists = []
+        all_lists.append(not_high_pieces)
+        all_lists.append(high_pieces)
+        all_lists.append(not_colored_pieces)
+        all_lists.append(colored_pieces)
+        all_lists.append(not_solid_pieces)
+        all_lists.append(solid_pieces)
+        all_lists.append(not_square_pieces)
+        all_lists.append(square_pieces)
+        
+        states = []
+        for l in all_lists:
+            for i in map(frozenset, combinations(l, 4)):
+                states.append(i)
+        
+        return tuple(states)
+    
     def choose_piece(self) -> int:                
         # selecting the piece with the minimum average reward:
         possible_actions = cook_status(self.quarto)['possible_actions']
         reward_dict = dict()
+        forbidden_pieces = []
         for a in possible_actions:
-            quarto_copy = deepcopy(self.quarto)
-            quarto_copy.select(a[1])
-            quarto_copy.place(*a[0])
-            next_state = tuple(quarto_copy.get_board_status().ravel())
+            # simulating the state as a list because deepcopy is time_consuming
+            board_state = list(self.quarto.get_board_status().ravel())
+            spot = a[0]
+            board_state[(spot[0] + 4*spot[1])] = a[1]
+        #     next_state = tuple(board_state)
+
+        #     if next_state in self.G:
+        #         reward = self.G[next_state]
+        #     else:
+        #         # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced            
+        #         placed_pieces = [p for p in next_state if p != -1]
+        #         similar_states = []
+        #         for g in self.G:
+        #             if not all(item in g for item in placed_pieces):
+        #                 break
+        #             # similar_states.append((g, similarity))
+        #             similarity0 = sum(g[i] == next_state[i] for i in range(16) if g[i] != -1)
+        #             similarity1 = -sum(g[i] == -1 for i in range(16))
+        #             similar_states.append((g, (similarity0, similarity1)))
+        #         fake_state = max(similar_states, key=lambda x: x[1])[0]
+        #         reward = self.G[fake_state]
+        #     if a[1] in reward_dict:
+        #         reward_dict[a[1]].append(reward)
+        #     else:
+        #         reward_dict[a[1]] = [reward]
+        
+        # return min(reward_dict.keys(), key=lambda i: np.mean(reward_dict[i]))
+
+
+
+            next_state = set_encoder(tuple(board_state))
+
+            for i in next_state:
+                if i in self.winning_states:
+                    forbidden_pieces.append(a[1])
+                    if a[1] in reward_dict:
+                        del(reward_dict[a[1]])
+                    break
+
+            if a[1] in forbidden_pieces:
+                continue
+
             if next_state in self.G:
                 reward = self.G[next_state]
             else:
-                # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state
-                # is replaced
-                placed_elements = [e for e in next_state if e != -1]
-                similar_states = []
-                for g in self.G:
-                    if not all(item in g for item in placed_elements):
-                        break
-                    similarity = sum(g[i] == next_state[i] for i in range(16))
-                    similar_states.append((g, similarity))
-                fake_state = max(similar_states, key=lambda x: x[1])[0]
+                # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced                
+                # fake_state = max((g for g in self.G), key=lambda g: (sum(i in g for i in next_state), sum(len(j) for j in g)))
+                fake_state = max((g for g in self.G), key=lambda g:
+                                (sum(i in g for i in next_state), sum(len(j) for j in g) + sum(len(x) for x in next_state)))
+
                 reward = self.G[fake_state]
             if a[1] in reward_dict:
                 reward_dict[a[1]].append(reward)
             else:
                 reward_dict[a[1]] = [reward]
         
+        if len(reward_dict.keys()) == 0:
+            return possible_actions[0][1]
         return min(reward_dict.keys(), key=lambda i: np.mean(reward_dict[i]))
+
 
 
     def place_piece(self) -> tuple[int, int]:   
         # selecting the spot corresponding to the best state
         possible_spots = cook_status(self.quarto)['possible_spots']
+        piece = self.quarto.get_selected_piece()
         spot_reward = dict()
         for s in possible_spots:
-            quarto_copy = deepcopy(self.quarto)
-            quarto_copy.place(*s)
-            next_state = tuple(quarto_copy.get_board_status().ravel())
+            # simulating the state as a list because deepcopy is time_consuming
+            board_state = list(self.quarto.get_board_status().ravel())
+            board_state[(s[0] + 4*s[1])] = piece
+        #     next_state = tuple(board_state)
+
+        #     if next_state in self.G:
+        #         reward = self.G[next_state]
+        #     else:
+        #         # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced
+        #         placed_pieces = [p for p in next_state if p != -1]
+        #         similar_states = []
+        #         for g in self.G:
+        #             if not all(item in g for item in placed_pieces):
+        #                 break
+        #             # similar_states.append((g, similarity))
+        #             similarity0 = sum(g[i] == next_state[i] for i in range(16) if g[i] != -1)
+        #             similarity1 = -sum(g[i] == -1 for i in range(16))
+        #             similar_states.append((g, (similarity0, similarity1)))
+        #         fake_state = max(similar_states, key=lambda x: x[1])[0]
+        #         # print(next_state)
+        #         # print(fake_state)
+        #         # input('')
+        #         reward = self.G[fake_state]
+        #     spot_reward[s] = reward
+        # return max(spot_reward.keys(), key=lambda x: spot_reward[x])
+
+
+            next_state = set_encoder(tuple(board_state))
+
+            for i in next_state:
+                if i in self.winning_states:
+                    return s
+
             if next_state in self.G:
                 reward = self.G[next_state]
             else:
-                # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state
-                # is replaced
-                placed_elements = [e for e in next_state if e != -1]
-                similar_states = []
-                for g in self.G:
-                    if not all(item in g for item in placed_elements):
-                        break
-                    similarity = sum(g[i] == next_state[i] for i in range(16))
-                    similar_states.append((g, similarity))
-                fake_state = max(similar_states, key=lambda x: x[1])[0]
+                # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced                
+                # fake_state = max((g for g in self.G), key=lambda g: (sum(i in g for i in next_state), sum(len(j) for j in g)))
+                fake_state = max((g for g in self.G), key=lambda g:
+                                (sum(i in g for i in next_state), sum(len(j) for j in g) + sum(len(x) for x in next_state)))
+                
+                print(next_state)
+                print(fake_state)
+                input('')
+
                 reward = self.G[fake_state]
             spot_reward[s] = reward
         return max(spot_reward.keys(), key=lambda x: spot_reward[x])
+
+
+
+def set_encoder(state: tuple) -> frozenset:
+    sety0 = frozenset(state[:4])
+    sety1 = frozenset(state[4:8])
+    sety2 = frozenset(state[8:12])
+    sety3 = frozenset(state[12:16])
+
+    setx0 = frozenset(state[0:16:4])
+    setx1 = frozenset(state[1:16:4])
+    setx2 = frozenset(state[2:16:4])
+    setx3 = frozenset(state[3:16:4])
+
+    setd1 = frozenset((state[0], state[5], state[10], state[15]))
+    setd2 = frozenset((state[12], state[9], state[6], state[3]))
+
+    result = frozenset((sety0, sety1, sety2, sety3, setx0, setx1, setx2, setx3, setd1, setd2))
+    return result
 
 
 def cook_status(quarto: Quarto) -> dict:
@@ -126,52 +240,31 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
     reinforcement learning process used to calculate the policy
     """
     
-    ## https://stackoverflow.com/questions/6284396/permutations-with-unique-values
-    # class unique_element:
-    #     def __init__(self,value,occurrences):
-    #         self.value = value
-    #         self.occurrences = occurrences
-
-    # def perm_unique(elements):
-    #     element_set=set(elements)
-    #     list_unique = [unique_element(i,elements.count(i)) for i in element_set]
-    #     u=len(elements)
-    #     return perm_unique_helper(list_unique,[0]*u,u-1)
-
-    # def perm_unique_helper(list_unique,result_list,d):
-    #     if d < 0:
-    #         yield tuple(result_list)
-    #     else:
-    #         for i in list_unique:
-    #             if i.occurrences > 0:
-    #                 result_list[d]=i.value
-    #                 i.occurrences-=1
-    #                 for g in  perm_unique_helper(list_unique,result_list,d-1):
-    #                     yield g
-    #                 i.occurrences+=1
-    
     class Agent(object):
         def __init__(self, quarto: Quarto, alpha, random_factor) -> None:
-            self.state_history = [(tuple(quarto.get_board_status().ravel()), 0)]  # (initial state, reward)
+            self.state_history = [(set_encoder(tuple(quarto.get_board_status().ravel())), 0)]  # (initial state, reward)
             self.alpha = alpha
             self.random_factor = random_factor
             self.G = {}
-            self.G[tuple(range(16))] = 0
+            # initial G with a not-winning full board state
+            # self.G[(8, 6, 11, 7, 3, 10, 2, 12, 15, 9, 5, 0, 13, 4, 14, 1)] = -2.0
+            # self.G[tuple([-1 for i in range(15)] + [0])] = 0.0
+            # self.init_reward()
+            self.G[frozenset((frozenset([-1]), frozenset((0, -1))))] = 0.0
 
         # def init_reward(self):
-            # initialize G as a dictionary with keys=((x, y), piece) and values=reward
-            # possible_states = cook_status(quarto)['possible_states']
-            # for i in possible_states:
-            #     self.G[i] = np.random.uniform(low=0.1, high=1.0)
-            # for i in range(16):
-            #     for j in range(16):
-            #         temp = []
-            #         for x in range(16):
-            #             if x == j:
-            #                 temp.append(-1)
-            #             else:
-            #                 temp.append(i)
-            #         self.G[temp] = 0                    
+            # all_pieces = tuple(range(16))
+            # len1_sets = [{-1}]
+            # len2_sets = list(map(set, product((i for i in all_pieces), [-1])))
+            # len3_sets = [i.union({-1}) for i in list(map(set, combinations(all_pieces, 2)))]
+            # len4_sets = [i.union({-1}) for i in list(map(set, combinations(all_pieces, 3)))]
+            # full_len4_sets = list(map(set, combinations(all_pieces, 4)))
+            # all_sets = len1_sets + len2_sets + len3_sets + len4_sets + full_len4_sets
+            # final_all_sets = list(map(frozenset, all_sets))
+            
+            # print(len(final_all_sets))
+            # print(final_all_sets[:20])
+            # exit()
 
         def place_piece(self, possible_spots: tuple, player: RLPlayer) -> tuple[int, int]:
             selected_spot = None
@@ -195,7 +288,8 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
                 selected_piece = player.choose_piece()
             return selected_piece
 
-        def update_state_history(self, state: tuple, reward: float) -> None:
+        # def update_state_history(self, state: tuple, reward: float) -> None:
+        def update_state_history(self, state: frozenset, reward: float) -> None:
             self.state_history.append((state, reward))
 
         def learn(self) -> None:
@@ -211,73 +305,103 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
 
     quarto = Quarto()
     agent = Agent(quarto, alpha, random_factor)
+    win = 0
 
-    for i in range(5000):
+    for i in range(1000):
             quarto_copy = deepcopy(quarto)
             RL_player = RLPlayer(quarto_copy, agent.G)
             random_player = RandomPlayer(quarto_copy)
-            while not quarto_copy.check_finished():
-                selected_piece = agent.choose_piece(cook_status(quarto_copy)['possible_pieces'], RL_player)
-                # quarto_copy.print()
-                # print(f'agent chose {selected_piece}')
-                # input('')
-                quarto_copy.select(selected_piece)
-                previous_state = tuple(quarto_copy.get_board_status().ravel())
-                
-                select_ok = False
-                while not select_ok:
-                    select_ok = quarto_copy.place(*random_player.place_piece())
-                
-                new_state = tuple(quarto_copy.get_board_status().ravel())
-                
-                if not quarto_copy.check_winner():
-                    # give a -20 reward to the state before the winning state
-                    agent.update_state_history(previous_state, -20.0)
-                    # give a 10 reward to the winning state
-                    agent.update_state_history(new_state, 10.0)
-                    break
-                
-                elif quarto_copy.check_finished():
-                    # give a 3 reward to the state before the draw state
-                    agent.update_state_history(previous_state, 3.0)
-                    # give a 0 reward to the last state if it is a tie
-                    agent.update_state_history(new_state, 0.0)
-                    break                
-                
-                select_ok = False
-                while not select_ok:
-                    select_ok = quarto_copy.select(random_player.choose_piece())
-                
-                selected_spot = agent.place_piece(cook_status(quarto_copy)['possible_spots'], RL_player)
-                # quarto_copy.print()
-                # print(f'agent chose {selected_spot}')
-                # input('')
-                previous_state = new_state
-                quarto_copy.place(*selected_spot)
-                new_state = tuple(quarto_copy.get_board_status().ravel())
-                 
-                if not quarto_copy.check_winner():
-                    # give a -20 reward to the state before the winning state
-                    agent.update_state_history(previous_state, -20.0)
-                    # give a 10 reward to the winning state
-                    agent.update_state_history(new_state, 10.0)
-                    break
+            agent_state = None
+            
+            # the starting player changes each turn            
+            if i % 2 == 0:            
+                while not quarto_copy.check_finished():
+                    selected_piece = agent.choose_piece(cook_status(quarto_copy)['possible_pieces'], RL_player)
+                    quarto_copy.select(selected_piece)
 
-                elif quarto_copy.check_finished():
-                    # give a 3 reward to the state before the draw state
-                    agent.update_state_history(previous_state, 3.0)
-                    # give a 0 reward to the last state if it is a tie
-                    agent.update_state_history(new_state, 0.0)
-                    break 
-                
-                else:
-                    # give a 3 reward to the previous if the game is not finished
-                    agent.update_state_history(previous_state, 3.0)
+                    select_ok = False
+                    while not select_ok:
+                        select_ok = quarto_copy.place(*random_player.place_piece())
+                    
+                    if not quarto_copy.check_winner():
+                        # give a -25 reward to the agent state if it loses
+                        agent.update_state_history(agent_state, -10.0)
+                        break
+                    
+                    elif quarto_copy.check_finished():
+                        # give a -5 reward to the agent state if it is a tie
+                        agent.update_state_history(agent_state, -2.0)
+                        break
 
+                    elif agent_state is not None:
+                        # give a -2 reward to the agent state if the game is not finished
+                        agent.update_state_history(agent_state, 0.0)               
+                    
+                    select_ok = False
+                    while not select_ok:
+                        select_ok = quarto_copy.select(random_player.choose_piece())
+                    
+                    selected_spot = agent.place_piece(cook_status(quarto_copy)['possible_spots'], RL_player)
+                    quarto_copy.place(*selected_spot)
+                    
+                    # agent_state = tuple(quarto_copy.get_board_status().ravel())                
+                    agent_state = set_encoder(tuple(quarto_copy.get_board_status().ravel()))
+                    if not quarto_copy.check_winner():
+                        # give a 5 reward to the agent state if it wins
+                        agent.update_state_history(agent_state, 5.0)
+                        win += 1
+                        break
+
+                    elif quarto_copy.check_finished():
+                        # give a -5 reward to the agent state if it is a tie
+                        agent.update_state_history(agent_state, -2.0)
+                        break
+
+            else:
+                while not quarto_copy.check_finished():
+                    select_ok = False
+                    while not select_ok:
+                        select_ok = quarto_copy.select(random_player.choose_piece())
+                    
+                    selected_spot = agent.place_piece(cook_status(quarto_copy)['possible_spots'], RL_player)
+                    quarto_copy.place(*selected_spot)
+                    
+                    # agent_state = tuple(quarto_copy.get_board_status().ravel())                
+                    agent_state = set_encoder(tuple(quarto_copy.get_board_status().ravel()))                
+                    if not quarto_copy.check_winner():
+                        # give a 5 reward to the agent state if it wins
+                        agent.update_state_history(agent_state, 5.0)
+                        win += 1
+                        break
+
+                    elif quarto_copy.check_finished():
+                        # give a -5 reward to the agent state if it is a tie
+                        agent.update_state_history(agent_state, -2.0)
+                        break
+                    
+                    selected_piece = agent.choose_piece(cook_status(quarto_copy)['possible_pieces'], RL_player)
+                    quarto_copy.select(selected_piece)
+
+                    select_ok = False
+                    while not select_ok:
+                        select_ok = quarto_copy.place(*random_player.place_piece())
+                    
+                    if not quarto_copy.check_winner():
+                        # give a -25 reward to the agent state if it loses
+                        agent.update_state_history(agent_state, -10.0)
+                        break
+                    
+                    elif quarto_copy.check_finished():
+                        # give a -5 reward to the agent state if it is a tie
+                        agent.update_state_history(agent_state, -2.0)
+                        break
+
+                    elif agent_state is not None:
+                        # give a -2 reward to the agent state if the game is not finished
+                        agent.update_state_history(agent_state, 0.0)
+                    
             agent.learn()
-            if i % 100 == 0:
-                print(f'{i}: {len(agent.G.keys())}')
-            # print(agent.G)
-            # exit()
-        
+            if i % 50 == 0:
+                print(f'{i}: {win/10}')
+    
     return agent.G
