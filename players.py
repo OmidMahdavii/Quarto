@@ -38,6 +38,88 @@ class HumanPlayer(Player):
         return x, y
 
 
+class SemiRandomPlayer(Player):
+    """
+    Performs a winning move if there is any
+    """
+
+    def __init__(self, quarto: Quarto) -> None:
+        super().__init__(quarto)
+        self.quarto = quarto
+        self.winning_states = self.init_winning_states()
+
+    def init_winning_states(self) -> tuple:
+        not_high_pieces = list(range(8))
+        high_pieces = list(range(8, 16))
+        not_colored_pieces = list(range(4)) + list(range(8, 12))
+        colored_pieces = list(range(4, 8)) + list(range(12, 16))
+        not_solid_pieces = [0, 1, 4, 5, 8, 9, 12, 13]
+        solid_pieces = [2, 3, 6, 7, 10, 11, 14, 15]
+        not_square_pieces = list(range(0, 16, 2))
+        square_pieces = list(range(1, 16, 2))
+
+        all_lists = []
+        all_lists.append(not_high_pieces)
+        all_lists.append(high_pieces)
+        all_lists.append(not_colored_pieces)
+        all_lists.append(colored_pieces)
+        all_lists.append(not_solid_pieces)
+        all_lists.append(solid_pieces)
+        all_lists.append(not_square_pieces)
+        all_lists.append(square_pieces)
+        
+        states = []
+        for l in all_lists:
+            for i in map(frozenset, combinations(l, 4)):
+                states.append(i)
+        
+        return tuple(states)
+
+    def choose_piece(self) -> int:
+        cooked = cook_status(self.quarto)
+        possible_actions = cooked['possible_actions']
+        possible_pieces = set(cooked['possible_pieces'])
+        forbidden_pieces = set()
+        for a in possible_actions:
+            if a[1] in forbidden_pieces:
+                continue
+            
+            # simulating the state as a list because deepcopy is time_consuming
+            board_state = list(self.quarto.get_board_status().ravel())
+            spot = a[0]
+            board_state[(spot[0] + 4*spot[1])] = a[1]
+
+            next_state = set_encoder(tuple(board_state))
+
+            # if the next state is a winning one don't choose the corresponding piece
+            for i in next_state:
+                if i in self.winning_states:
+                    forbidden_pieces.add(a[1])
+                    break
+
+        not_forbidden_pieces = possible_pieces.difference(forbidden_pieces)
+        if len(not_forbidden_pieces) != 0:
+            return np.random.choice(list(not_forbidden_pieces))
+        
+        return np.random.choice(list(possible_pieces))
+        
+    def place_piece(self) -> tuple[int, int]:
+        possible_spots = cook_status(self.quarto)['possible_spots']
+        piece = self.quarto.get_selected_piece()
+        for s in possible_spots:
+            # simulating the state as a list because deepcopy is time_consuming
+            board_state = list(self.quarto.get_board_status().ravel())
+            board_state[(s[0] + 4*s[1])] = piece
+            next_state = set_encoder(tuple(board_state))
+
+            # if the next state is a winning one return the chosen spot
+            for i in next_state:
+                if i in self.winning_states:
+                    return s
+
+        return possible_spots[np.random.choice(len(possible_spots))]
+
+
 class RLPlayer(Player):
     """
     Player developed by the reinforcement learning process
@@ -83,37 +165,17 @@ class RLPlayer(Player):
         forbidden_pieces = []
         for a in possible_actions:
             # simulating the state as a list because deepcopy is time_consuming
+
+            if a[1] in forbidden_pieces:
+                continue
+
             board_state = list(self.quarto.get_board_status().ravel())
             spot = a[0]
             board_state[(spot[0] + 4*spot[1])] = a[1]
-        #     next_state = tuple(board_state)
-
-        #     if next_state in self.G:
-        #         reward = self.G[next_state]
-        #     else:
-        #         # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced            
-        #         placed_pieces = [p for p in next_state if p != -1]
-        #         similar_states = []
-        #         for g in self.G:
-        #             if not all(item in g for item in placed_pieces):
-        #                 break
-        #             # similar_states.append((g, similarity))
-        #             similarity0 = sum(g[i] == next_state[i] for i in range(16) if g[i] != -1)
-        #             similarity1 = -sum(g[i] == -1 for i in range(16))
-        #             similar_states.append((g, (similarity0, similarity1)))
-        #         fake_state = max(similar_states, key=lambda x: x[1])[0]
-        #         reward = self.G[fake_state]
-        #     if a[1] in reward_dict:
-        #         reward_dict[a[1]].append(reward)
-        #     else:
-        #         reward_dict[a[1]] = [reward]
-        
-        # return min(reward_dict.keys(), key=lambda i: np.mean(reward_dict[i]))
-
-
 
             next_state = set_encoder(tuple(board_state))
 
+            # if the next state is a winning one don't ever choose the corresponding piece
             for i in next_state:
                 if i in self.winning_states:
                     forbidden_pieces.append(a[1])
@@ -127,10 +189,13 @@ class RLPlayer(Player):
             if next_state in self.G:
                 reward = self.G[next_state]
             else:
-                # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced                
-                # fake_state = max((g for g in self.G), key=lambda g: (sum(i in g for i in next_state), sum(len(j) for j in g)))
+                # if the state is not analyzed before, the reward corresponding to the most similar state is replaced
+                # the state with the lower length which has the most common number of subsets
+            
+                # fake_state = max((g for g in self.G), key=lambda g:
+                #                 (sum(i in g for i in next_state), sum(len(j) for j in g) + sum(len(x) for x in next_state)))
                 fake_state = max((g for g in self.G), key=lambda g:
-                                (sum(i in g for i in next_state), sum(len(j) for j in g) + sum(len(x) for x in next_state)))
+                                (sum(i in g for i in next_state), -len(g)))
 
                 reward = self.G[fake_state]
             if a[1] in reward_dict:
@@ -138,8 +203,27 @@ class RLPlayer(Player):
             else:
                 reward_dict[a[1]] = [reward]
         
+        # if there is at least one winning state for every piece select the piece with the minimum average reward
         if len(reward_dict.keys()) == 0:
-            return possible_actions[0][1]
+            for a in possible_actions:
+                board_state = list(self.quarto.get_board_status().ravel())
+                spot = a[0]
+                board_state[(spot[0] + 4*spot[1])] = a[1]
+
+                next_state = set_encoder(tuple(board_state))
+
+                if next_state in self.G:
+                    reward = self.G[next_state]
+                else:
+                    fake_state = max((g for g in self.G), key=lambda g:
+                                    (sum(i in g for i in next_state), -len(g)))
+
+                    reward = self.G[fake_state]
+                if a[1] in reward_dict:
+                    reward_dict[a[1]].append(reward)
+                else:
+                    reward_dict[a[1]] = [reward]
+        
         return min(reward_dict.keys(), key=lambda i: np.mean(reward_dict[i]))
 
 
@@ -153,32 +237,9 @@ class RLPlayer(Player):
             # simulating the state as a list because deepcopy is time_consuming
             board_state = list(self.quarto.get_board_status().ravel())
             board_state[(s[0] + 4*s[1])] = piece
-        #     next_state = tuple(board_state)
-
-        #     if next_state in self.G:
-        #         reward = self.G[next_state]
-        #     else:
-        #         # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced
-        #         placed_pieces = [p for p in next_state if p != -1]
-        #         similar_states = []
-        #         for g in self.G:
-        #             if not all(item in g for item in placed_pieces):
-        #                 break
-        #             # similar_states.append((g, similarity))
-        #             similarity0 = sum(g[i] == next_state[i] for i in range(16) if g[i] != -1)
-        #             similarity1 = -sum(g[i] == -1 for i in range(16))
-        #             similar_states.append((g, (similarity0, similarity1)))
-        #         fake_state = max(similar_states, key=lambda x: x[1])[0]
-        #         # print(next_state)
-        #         # print(fake_state)
-        #         # input('')
-        #         reward = self.G[fake_state]
-        #     spot_reward[s] = reward
-        # return max(spot_reward.keys(), key=lambda x: spot_reward[x])
-
-
             next_state = set_encoder(tuple(board_state))
 
+            # if the next state is a winning one return the chosen spot
             for i in next_state:
                 if i in self.winning_states:
                     return s
@@ -186,14 +247,17 @@ class RLPlayer(Player):
             if next_state in self.G:
                 reward = self.G[next_state]
             else:
-                # if the state is not analyzed before, the reward corresponding to the most similar more_crowded state is replaced                
-                # fake_state = max((g for g in self.G), key=lambda g: (sum(i in g for i in next_state), sum(len(j) for j in g)))
+                # if the state is not analyzed before, the reward corresponding to the most similar state is replaced
+                # the state with the lower length which has the most common number of subsets
+                              
+                # fake_state = max((g for g in self.G), key=lambda g:
+                #                 (sum(i in g for i in next_state), sum(len(j) for j in g) + sum(len(x) for x in next_state)))
                 fake_state = max((g for g in self.G), key=lambda g:
-                                (sum(i in g for i in next_state), sum(len(j) for j in g) + sum(len(x) for x in next_state)))
+                                (sum(i in g for i in next_state), -len(g)))
                 
-                print(next_state)
-                print(fake_state)
-                input('')
+                # print(next_state)
+                # print(fake_state)
+                # input('')
 
                 reward = self.G[fake_state]
             spot_reward[s] = reward
@@ -246,28 +310,14 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
             self.alpha = alpha
             self.random_factor = random_factor
             self.G = {}
-            # initial G with a not-winning full board state
-            # self.G[(8, 6, 11, 7, 3, 10, 2, 12, 15, 9, 5, 0, 13, 4, 14, 1)] = -2.0
-            # self.G[tuple([-1 for i in range(15)] + [0])] = 0.0
-            # self.init_reward()
+            # initial G with a state with only one piece
             self.G[frozenset((frozenset([-1]), frozenset((0, -1))))] = 0.0
+            # self.init_reward()
 
         # def init_reward(self):
-            # all_pieces = tuple(range(16))
-            # len1_sets = [{-1}]
-            # len2_sets = list(map(set, product((i for i in all_pieces), [-1])))
-            # len3_sets = [i.union({-1}) for i in list(map(set, combinations(all_pieces, 2)))]
-            # len4_sets = [i.union({-1}) for i in list(map(set, combinations(all_pieces, 3)))]
-            # full_len4_sets = list(map(set, combinations(all_pieces, 4)))
-            # all_sets = len1_sets + len2_sets + len3_sets + len4_sets + full_len4_sets
-            # final_all_sets = list(map(frozenset, all_sets))
-            
-            # print(len(final_all_sets))
-            # print(final_all_sets[:20])
-            # exit()
 
         def place_piece(self, possible_spots: tuple, player: RLPlayer) -> tuple[int, int]:
-            selected_spot = None
+            # selected_spot = None
             randomN = np.random.random()
             if randomN < self.random_factor:
                 # select a random spot
@@ -278,17 +328,16 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
             return selected_spot
 
         def choose_piece(self, possible_pieces: tuple, player: RLPlayer) -> int:
-            selected_piece = None
+            # selected_piece = None
             randomN = np.random.random()
             if randomN < self.random_factor:
                 # select a random piece
-                selected_piece = possible_pieces[np.random.choice(len(possible_pieces))]
+                selected_piece = np.random.choice(list(possible_pieces))
             else:
                 # if exploiting, gather all possible pieces and choose one with the lowest average reward
                 selected_piece = player.choose_piece()
             return selected_piece
 
-        # def update_state_history(self, state: tuple, reward: float) -> None:
         def update_state_history(self, state: frozenset, reward: float) -> None:
             self.state_history.append((state, reward))
 
@@ -301,16 +350,17 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
 
             self.state_history = []
 
-            self.random_factor -= 10e-6  # decrease random factor each episode of play
+            self.random_factor -= 10e-5  # decrease random factor each episode of play
 
     quarto = Quarto()
     agent = Agent(quarto, alpha, random_factor)
     win = 0
 
-    for i in range(1000):
+    for i in range(3000):
             quarto_copy = deepcopy(quarto)
             RL_player = RLPlayer(quarto_copy, agent.G)
-            random_player = RandomPlayer(quarto_copy)
+            # random_player = RandomPlayer(quarto_copy)
+            random_player = SemiRandomPlayer(quarto_copy)
             agent_state = None
             
             # the starting player changes each turn            
@@ -344,7 +394,6 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
                     selected_spot = agent.place_piece(cook_status(quarto_copy)['possible_spots'], RL_player)
                     quarto_copy.place(*selected_spot)
                     
-                    # agent_state = tuple(quarto_copy.get_board_status().ravel())                
                     agent_state = set_encoder(tuple(quarto_copy.get_board_status().ravel()))
                     if not quarto_copy.check_winner():
                         # give a 5 reward to the agent state if it wins
@@ -366,7 +415,6 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
                     selected_spot = agent.place_piece(cook_status(quarto_copy)['possible_spots'], RL_player)
                     quarto_copy.place(*selected_spot)
                     
-                    # agent_state = tuple(quarto_copy.get_board_status().ravel())                
                     agent_state = set_encoder(tuple(quarto_copy.get_board_status().ravel()))                
                     if not quarto_copy.check_winner():
                         # give a 5 reward to the agent state if it wins
@@ -402,6 +450,7 @@ def learning(alpha=0.15, random_factor=0.2) -> dict:
                     
             agent.learn()
             if i % 50 == 0:
-                print(f'{i}: {win/10}')
+                print(f'{i}: {win/0.5}%')
+                win = 0
     
     return agent.G
