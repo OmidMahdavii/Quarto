@@ -1,9 +1,9 @@
 from quarto.objects import Player, Quarto
-from main import RandomPlayer
 import logging
 import numpy as np
 from itertools import product
 from copy import deepcopy
+from matplotlib import pyplot as plt
 
 
 class HumanPlayer(Player):
@@ -110,11 +110,10 @@ class RLPlayer(Player):
         reward_dict = dict()
         forbidden_pieces = []
         for a in possible_actions:
-            # simulating the state as a list because deepcopy is time_consuming
-
             if a[1] in forbidden_pieces:
                 continue
 
+            # simulating the state as a list because deepcopy is time_consuming
             board_state = list(self.quarto.get_board_status().ravel())
             spot = a[0]
             board_state[(spot[0] + 4*spot[1])] = a[1]
@@ -177,7 +176,6 @@ class RLPlayer(Player):
             spot_reward[s] = self.G[next_state]
         
         return max(spot_reward.keys(), key=lambda x: spot_reward[x])
-
 
 
 def state_encoder(state: tuple) -> tuple:
@@ -264,10 +262,9 @@ def learning(alpha=0.15, random_factor=0.2, gamma=1.0) -> dict:
             match6 = product([6], range(5))
             match7 = product([7], range(5))
             for i in product(match0, match1, match2, match3, match4, match5, match6, match7):
-                self.G[i] = np.random.uniform(low=1.0, high=0.1)
+                self.G[i] = np.random.uniform(low=0.1, high=1.0)
 
         def place_piece(self, possible_spots: tuple, player: RLPlayer) -> tuple[int, int]:
-            # selected_spot = None
             randomN = np.random.random()
             if randomN < self.random_factor:
                 # select a random spot
@@ -278,7 +275,6 @@ def learning(alpha=0.15, random_factor=0.2, gamma=1.0) -> dict:
             return selected_spot
 
         def choose_piece(self, possible_pieces: tuple, player: RLPlayer) -> int:
-            # selected_piece = None
             randomN = np.random.random()
             if randomN < self.random_factor:
                 # select a random piece
@@ -310,7 +306,6 @@ def learning(alpha=0.15, random_factor=0.2, gamma=1.0) -> dict:
     for i in range(10000):
             quarto_copy = deepcopy(quarto)
             RL_player = RLPlayer(quarto_copy, agent.G)
-            # random_player = RandomPlayer(quarto_copy)
             random_player = SemiRandomPlayer(quarto_copy)
             agent_state = None
             
@@ -401,9 +396,22 @@ def learning(alpha=0.15, random_factor=0.2, gamma=1.0) -> dict:
                     
             agent.learn()
             if i % 200 == 0:
-                f = open(f'record/percentage_alpha{round(alpha*100)}_random{round(random_factor*100)}_gamma{round(gamma*100)}.txt','a')
+                f = open(f'record/percentage.txt','a')
                 f.write(f'{i}: {win/2.0}%\r')
                 f.close()
                 win = 0
+    
+    # with open(f'record/percentage.txt', 'r') as f:
+    #     lines = f.readlines()
+
+    # x_values = []
+    # y_values = []
+    # for l in lines:
+    #     l = l.strip().strip('%').split(':')
+    #     x_values.append(int(l[0]))
+    #     y_values.append(float(l[1]))
+
+    # plt.plot(x_values, y_values)
+    # plt.show()
     
     return agent.G
